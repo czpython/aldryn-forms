@@ -12,7 +12,7 @@ from django.utils.translation import ugettext_lazy as _
 import cms
 from cms.models.fields import PageField
 from cms.models.pluginmodel import CMSPlugin
-from cms.utils.plugins import downcast_plugins
+from cms.utils.plugins import build_plugin_tree, downcast_plugins
 
 from filer.fields.folder import FilerFolderField
 
@@ -185,11 +185,24 @@ class FormPlugin(CMSPlugin):
             # 3.1 and 3.0 compatibility
             if CMS_31:
                 # default ordering is by path
-                ordering = ('path', 'position')
+                ordering = ('path',)
             else:
                 ordering = ('tree_id', 'level', 'position')
+
             descendants = self.get_descendants().order_by(*ordering)
-            self.child_plugin_instances = descendants
+            # Set parent_id to None in order to
+            # fool the build_plugin_tree function.
+            # This is sadly necessary to avoid getting all nodes
+            # higher than the form.
+            parent_id = self.parent_id
+            self.parent_id = None
+            # Important that this is a list in order to modify
+            # the current instance
+            descendants_with_self = [self] + list(descendants)
+            # Let the cms build the tree
+            build_plugin_tree(descendants_with_self)
+            # Set back the original parent
+            self.parent_id = parent_id
 
         if self._form_elements is None:
             children = get_nested_plugins(self)
@@ -457,6 +470,7 @@ class FormSubmission(models.Model):
     sent_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        ordering = ['-sent_at']
         verbose_name = _('Form submission')
         verbose_name_plural = _('Form submissions')
 
