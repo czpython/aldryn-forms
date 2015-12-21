@@ -1,93 +1,39 @@
 # -*- coding: utf-8 -*-
 from collections import defaultdict
-from email.utils import formataddr
 from functools import partial
 
 from django.contrib import admin
 from django.contrib import messages
-from django.core.urlresolvers import reverse
 from django.shortcuts import redirect, render_to_response
 from django.template.context import RequestContext
-# we use SortedDict to remain compatible across python versions
-from django.template.loader import render_to_string
 from django.utils.datastructures import SortedDict
 from django.utils.translation import ugettext, ugettext_lazy as _
 
 from django_tablib.views import export
 
-from .forms import FormDataExportForm, FormSubmissionExportForm
-from .models import FormData, FormSubmission
+from .base import BaseFormSubmissionAdmin
+from .forms import FormDataExportForm
+from ..models import FormData
 
 
-class BaseFormSubmissionAdmin(admin.ModelAdmin):
-    date_hierarchy = 'sent_at'
-    list_display = ['__unicode__', 'sent_at', 'language']
-    list_filter = ['name', 'language']
+class FormDataAdmin(BaseFormSubmissionAdmin):
+    change_list_template = 'admin/aldryn_forms/formsubmission/change_list.html'
+    export_form = FormDataExportForm
     readonly_fields = [
         'name',
-        'get_data_for_display',
+        'data',
         'language',
         'sent_at',
         'get_recipients_for_display'
     ]
-    export_form = None
-
-    def has_add_permission(self, request):
-        return False
-
-    def get_data_for_display(self, obj):
-        data = obj.get_form_data()
-        html = render_to_string(
-            template_name='admin/aldryn_forms/display/submission_data.html',
-            dictionary={'data': data}
-        )
-        return html
-    get_data_for_display.allow_tags = True
-    get_data_for_display.short_description = _('data')
 
     def get_recipients(self, obj):
-        recipients = obj.get_recipients()
-        formatted = [formataddr((recipient.name, recipient.email))
-                     for recipient in recipients]
-        return formatted
+        return obj.get_recipients()
 
-    def get_recipients_for_display(self, obj):
-        people_list = self.get_recipients(obj)
-        html = render_to_string(
-            template_name='admin/aldryn_forms/display/recipients.html',
-            dictionary={'people': people_list}
-        )
-        return html
-    get_recipients_for_display.allow_tags = True
-    get_recipients_for_display.short_description = _('people notified')
-
-    def get_urls(self):
-        from django.conf.urls import patterns, url
-
-        def pattern(regex, fn, name):
-            args = [regex, self.admin_site.admin_view(fn)]
-            return url(*args, name=self.get_admin_url(name))
-
-        url_patterns = patterns('',
-            pattern(r'export/$', self.form_export, 'export'),
-        )
-
-        return url_patterns + super(BaseFormSubmissionAdmin, self).get_urls()
-
-    def get_admin_url(self, name):
-        try:
-            model_name = self.model._meta.model_name
-        except AttributeError:
-            # django <= 1.5 compat
-            model_name = self.model._meta.module_name
-
-        url_name = "%s_%s_%s" % (self.model._meta.app_label, model_name, name)
-        return url_name
+    def get_form_export_view(self):
+        return self.form_export
 
     def form_export(self, request):
-        opts = self.model._meta
-        app_label = opts.app_label
-        context = RequestContext(request)
         form = self.export_form(request.POST or None)
 
         if form.is_valid():
@@ -162,41 +108,11 @@ class BaseFormSubmissionAdmin(admin.ModelAdmin):
                 self.message_user(request, _("No records found"), level=messages.WARNING)
                 export_url = 'admin:{}'.format(self.get_admin_url('export'))
                 return redirect(export_url)
-        else:
-            context['errors'] = form.errors
 
-        context.update({
-            'adminform': form,
-            'media': self.media + form.media,
-            'has_change_permission': True,
-            'opts': opts,
-            'root_path': reverse('admin:index'),
-            'current_app': self.admin_site.name,
-            'app_label': app_label,
-            'original': 'Export',
-        })
+        context = RequestContext(request)
+        context['errors'] = form.errors
+        context.update(self.get_admin_context(form=form, title='Export'))
         return render_to_response('admin/aldryn_forms/export.html', context)
 
 
-class FormDataAdmin(BaseFormSubmissionAdmin):
-    change_list_template = 'admin/aldryn_forms/formsubmission/change_list.html'
-    export_form = FormDataExportForm
-    readonly_fields = [
-        'name',
-        'data',
-        'language',
-        'sent_at',
-        'get_recipients_for_display'
-    ]
-
-    def get_recipients(self, obj):
-        return obj.get_recipients()
-
-
-class FormSubmissionAdmin(BaseFormSubmissionAdmin):
-    readonly_fields = BaseFormSubmissionAdmin.readonly_fields + ['form_url']
-    export_form = FormSubmissionExportForm
-
-
 admin.site.register(FormData, FormDataAdmin)
-admin.site.register(FormSubmission, FormSubmissionAdmin)
