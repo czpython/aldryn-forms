@@ -9,7 +9,7 @@ from django.contrib.admin.widgets import AdminDateWidget
 from django.forms.forms import NON_FIELD_ERRORS
 from django.utils import timezone
 from django.utils.text import slugify
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import ugettext, ugettext_lazy as _
 
 from sizefield.utils import filesizeformat
 
@@ -30,7 +30,7 @@ class FileSizeCheckMixin(object):
 
         if self.max_size is not None and data.size > self.max_size:
             raise forms.ValidationError(
-                _('File size must be under %s. Current file size is %s.') % (
+                ugettext('File size must be under %s. Current file size is %s.') % (
                     filesizeformat(self.max_size),
                     filesizeformat(data.size),
                 ))
@@ -58,13 +58,13 @@ class RestrictedImageField(FileSizeCheckMixin, forms.ImageField):
 
         if self.max_width and width > self.max_width:
             raise forms.ValidationError(
-                _('Image width must be under %s pixels. '
-                  'Current width is %s pixels.') % (self.max_width, width))
+                ugettext('Image width must be under %s pixels. '
+                         'Current width is %s pixels.') % (self.max_width, width))
 
         if self.max_height and height > self.max_height:
             raise forms.ValidationError(
-                _('Image height must be under %s pixels. '
-                  'Current height is %s pixels.') % (self.max_height, height))
+                ugettext('Image height must be under %s pixels. '
+                         'Current height is %s pixels.') % (self.max_height, height))
 
         return data
 
@@ -78,7 +78,7 @@ def form_choices(modelClass):
 
 class BaseFormExportForm(forms.Form):
     excel_limit = 65536
-    export_filename = 'export-{form_name}-%Y-%m-%d'
+    export_filename = 'export-{language}-{form_name}-%Y-%m-%d'
 
     form_name = forms.ChoiceField(choices=[])
     from_date = forms.DateField(
@@ -91,12 +91,19 @@ class BaseFormExportForm(forms.Form):
         required=False,
         widget=AdminDateWidget
     )
+    language = forms.ChoiceField(
+        label=_('language'),
+        choices=settings.LANGUAGES
+    )
 
     def __init__(self, *args, **kwargs):
         super(BaseFormExportForm, self).__init__(*args, **kwargs)
         self.fields['form_name'].choices = form_choices(modelClass=self.model)
 
     def clean(self):
+        if self.errors:
+            return self.cleaned_data
+
         queryset = self.get_queryset()
 
         if queryset.count() >= self.excel_limit:
@@ -108,14 +115,20 @@ class BaseFormExportForm(forms.Form):
     def get_filename(self):
         data = self.cleaned_data
         form_name = data['form_name'].lower()
-        filename = self.export_filename.format(form_name=slugify(form_name))
+        filename = self.export_filename.format(
+            form_name=slugify(form_name),
+            language=data['language'],
+        )
         return timezone.now().strftime(filename)
 
     def get_queryset(self):
         data = self.cleaned_data
         from_date, to_date = data.get('from_date'), data.get('to_date')
 
-        queryset = self.model.objects.filter(name=data['form_name'])
+        queryset = self.model.objects.filter(
+            name=data['form_name'],
+            language=data['language'],
+        )
 
         if from_date:
             lower = datetime(*from_date.timetuple()[:6]) # inclusive
